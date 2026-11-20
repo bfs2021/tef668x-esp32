@@ -377,8 +377,27 @@ static size_t lineLength(const char *text, size_t len) {
   return n;
 }
 
+/* A replace stops at its first bad line, having written nothing: the counts
+ * from the lines read so far would say channels were imported when none were.
+ * Only the line to look at is worth reporting. */
+static bool refuseReplace(uint16_t lineNumber, MemoryImportResult *result,
+                          MemoryImportResult *out) {
+  result->skipped++;
+  if (result->firstBadLine == 0) {
+    result->firstBadLine = lineNumber;
+  }
+  const uint16_t bad = result->firstBadLine;
+  memset(result, 0, sizeof(*result));
+  result->firstBadLine = bad;
+  if (out != NULL) {
+    *out = *result;
+  }
+  return false;
+}
+
 bool memoryImportCsv(MemoryStore *m, MemoryImportMode mode, const char *text,
-                     size_t len, MemoryImportResult *out) {
+                     size_t len, const BandPlanConfig *plan,
+                     MemoryImportResult *out) {
   MemoryImportResult result;
   memset(&result, 0, sizeof(result));
   if (out != NULL) {
@@ -389,6 +408,11 @@ bool memoryImportCsv(MemoryStore *m, MemoryImportMode mode, const char *text,
     return false;
   }
 
+  /* The slots the file has named, so a replace can tell a file that names
+   * one slot twice. Taken again at every pass, since each pass reads the
+   * file afresh. */
+  bool seen[MEMORY_SLOT_COUNT];
+
   /* Replace reads the whole file before it writes anything, so a file with a
    * line it cannot read leaves the stored list alone. Merge writes as it
    * goes, because a merge can only add. */
@@ -396,6 +420,7 @@ bool memoryImportCsv(MemoryStore *m, MemoryImportMode mode, const char *text,
   for (int pass = 0; pass < passes; pass++) {
     bool writing = pass == passes - 1;
     memset(&result, 0, sizeof(result));
+    memset(seen, 0, sizeof(seen));
     if (writing && mode == MEMORY_IMPORT_REPLACE) {
       memoryInit(m);
     }
@@ -419,27 +444,30 @@ bool memoryImportCsv(MemoryStore *m, MemoryImportMode mode, const char *text,
       MemoryChannel channel;
       bool cut = false;
       if (!parseLine(line, length, &slot, &channel, &cut)) {
+        if (mode == MEMORY_IMPORT_REPLACE) {
+          return refuseReplace(lineNumber, &result, out);
+        }
         result.skipped++;
         if (result.firstBadLine == 0) {
           result.firstBadLine = lineNumber;
-        }
-        if (mode == MEMORY_IMPORT_REPLACE) {
-          /* Nothing has been written and nothing will be, so the counts from
-           * the lines read so far would say channels were imported when none
-           * were. Only the line to look at is worth reporting. */
-          uint16_t bad = result.firstBadLine;
-          memset(&result, 0, sizeof(result));
-          result.firstBadLine = bad;
-          if (out != NULL) {
-            *out = result;
-          }
-          return false;
         }
         continue;
       }
       if (cut) {
         result.truncated++;
       }
+      if (plan != NULL && !memoryChannelTunable(&channel, plan)) {
+        result.outsidePlan++;
+      }
+      /* A file that names one slot twice does not say which of its lines is
+       * the preset, and a replace has no way to ask, so the second line is
+       * the one it stops at, the same as a line that cannot be read. A merge
+       * keeps the first and counts the second in `kept`, as for a slot that
+       * was taken before the file arrived. */
+      if (mode == MEMORY_IMPORT_REPLACE && seen[slot]) {
+        return refuseReplace(lineNumber, &result, out);
+      }
+      seen[slot] = true;
       if (mode == MEMORY_IMPORT_MERGE && memorySlotUsed(m, slot)) {
         result.kept++;
         continue;

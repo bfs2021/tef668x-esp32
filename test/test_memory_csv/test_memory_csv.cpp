@@ -26,7 +26,7 @@ static MemoryChannel channel(uint8_t band, uint32_t freqKHz, const char *name) {
 }
 
 static bool import(const char *text, MemoryImportMode mode) {
-  return memoryImportCsv(&store, mode, text, strlen(text), &result);
+  return memoryImportCsv(&store, mode, text, strlen(text), NULL, &result);
 }
 
 static const char *line(int slot) {
@@ -205,7 +205,7 @@ static void a_written_list_reads_back_the_same(void) {
   MemoryStore back;
   memoryInit(&back);
   TEST_ASSERT_TRUE(
-      memoryImportCsv(&back, MEMORY_IMPORT_REPLACE, text, at, &result));
+      memoryImportCsv(&back, MEMORY_IMPORT_REPLACE, text, at, NULL, &result));
   TEST_ASSERT_EQUAL_UINT16(3, result.lines);
   TEST_ASSERT_EQUAL_UINT16(3, result.imported);
   TEST_ASSERT_EQUAL_UINT16(0, result.skipped);
@@ -451,12 +451,14 @@ static void a_width_the_band_does_not_offer_is_refused(void) {
 }
 
 static void the_arguments_are_checked(void) {
-  TEST_ASSERT_FALSE(memoryImportCsv(NULL, MEMORY_IMPORT_MERGE, "x", 1, NULL));
   TEST_ASSERT_FALSE(
-      memoryImportCsv(&store, MEMORY_IMPORT_MERGE, NULL, 1, &result));
+      memoryImportCsv(NULL, MEMORY_IMPORT_MERGE, "x", 1, NULL, NULL));
   TEST_ASSERT_FALSE(
-      memoryImportCsv(&store, (MemoryImportMode)7, "x", 1, &result));
-  TEST_ASSERT_TRUE(memoryImportCsv(&store, MEMORY_IMPORT_MERGE, "", 0, NULL));
+      memoryImportCsv(&store, MEMORY_IMPORT_MERGE, NULL, 1, NULL, &result));
+  TEST_ASSERT_FALSE(
+      memoryImportCsv(&store, (MemoryImportMode)7, "x", 1, NULL, &result));
+  TEST_ASSERT_TRUE(
+      memoryImportCsv(&store, MEMORY_IMPORT_MERGE, "", 0, NULL, NULL));
 }
 
 static void two_lines_naming_one_slot(void) {
@@ -465,10 +467,37 @@ static void two_lines_naming_one_slot(void) {
   TEST_ASSERT_EQUAL_STRING("First", memoryGet(&store, 0)->name);
   TEST_ASSERT_EQUAL_UINT16(1, result.kept);
 
+  /* A replace reads before it writes, and a file that names one slot twice
+   * does not say which of the lines is the preset, so it is refused at the
+   * second line, the same as a line that cannot be read. */
   memoryInit(&store);
-  TEST_ASSERT_TRUE(import("1,FM,92700,0,First\n1,FM,92800,0,Second\n",
-                          MEMORY_IMPORT_REPLACE));
-  TEST_ASSERT_EQUAL_STRING("Second", memoryGet(&store, 0)->name);
+  TEST_ASSERT_FALSE(import("1,FM,92700,0,First\n1,FM,92800,0,Second\n",
+                           MEMORY_IMPORT_REPLACE));
+  TEST_ASSERT_EQUAL_UINT16(2, result.firstBadLine);
+  TEST_ASSERT_EQUAL_UINT16(0, result.imported);
+  TEST_ASSERT_EQUAL_INT(0, memoryCount(&store));
+}
+
+/* The band plan in use, not the band the channel names, says whether a
+ * frequency can be tuned. The line is still imported, since a change of
+ * region can bring it back, but it is counted on its own. */
+static void a_frequency_outside_the_band_plan_is_counted_and_kept(void) {
+  BandPlanConfig plan;
+  bandPlanDefaults(&plan);
+  const char *text = "1,FM,92700,0,In\n2,FM,70000,0,Out\n";
+  TEST_ASSERT_TRUE(
+      memoryImportCsv(&store, MEMORY_IMPORT_MERGE, text, strlen(text), &plan,
+                      &result));
+  TEST_ASSERT_EQUAL_UINT16(2, result.imported);
+  TEST_ASSERT_EQUAL_UINT16(1, result.outsidePlan);
+  TEST_ASSERT_EQUAL_STRING("Out", memoryGet(&store, 1)->name);
+
+  /* Without a plan nothing is judged, and nothing is counted. */
+  memoryInit(&store);
+  memset(&result, 0, sizeof(result));
+  TEST_ASSERT_TRUE(import(text, MEMORY_IMPORT_MERGE));
+  TEST_ASSERT_EQUAL_UINT16(2, result.imported);
+  TEST_ASSERT_EQUAL_UINT16(0, result.outsidePlan);
 }
 
 static void a_full_file_of_ninety_nine_channels_lands(void) {
@@ -479,7 +508,7 @@ static void a_full_file_of_ninety_nine_channels_lands(void) {
                            "%d,FM,%d,0,Station %d\n", i, 87500 + i * 100, i);
   }
   TEST_ASSERT_TRUE(
-      memoryImportCsv(&store, MEMORY_IMPORT_REPLACE, text, at, &result));
+      memoryImportCsv(&store, MEMORY_IMPORT_REPLACE, text, at, NULL, &result));
   TEST_ASSERT_EQUAL_UINT16(MEMORY_SLOT_COUNT, result.imported);
   TEST_ASSERT_EQUAL_INT(MEMORY_SLOT_COUNT, memoryCount(&store));
 }
@@ -579,6 +608,7 @@ int main(int, char **) {
   RUN_TEST(a_width_the_band_does_not_offer_is_refused);
   RUN_TEST(the_arguments_are_checked);
   RUN_TEST(two_lines_naming_one_slot);
+  RUN_TEST(a_frequency_outside_the_band_plan_is_counted_and_kept);
   RUN_TEST(a_full_file_of_ninety_nine_channels_lands);
   RUN_TEST(a_name_that_never_ends_is_written_up_to_the_field);
   RUN_TEST(a_name_that_never_ends_and_holds_a_comma_is_quoted);

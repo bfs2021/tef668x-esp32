@@ -75,7 +75,8 @@ typedef enum {
    * Throw the list away and load the file.
    *
    * All or nothing. Every line is read before anything is written, and one
-   * line that cannot be read means the store is left exactly as it was, with
+   * line that cannot be read, or a second line naming a slot the file has
+   * named already, means the store is left exactly as it was, with
    * `firstBadLine` saying which line to look at. Wiping a list and then
    * stopping part way through a bad file would lose channels that the person
    * had no way of getting back.
@@ -96,12 +97,28 @@ typedef struct {
    * name that came back shorter than it went in is worth saying.
    */
   uint16_t truncated;
+  /*
+   * Lines whose frequency the band plan in use cannot reach, which were kept
+   * rather than refused, since a change of region can bring them back.
+   *
+   * Counted on their own so the reply need not read as if every imported
+   * line were usable. Nothing is judged, and nothing counted here, when the
+   * import was given no plan.
+   */
+  uint16_t outsidePlan;
   /* Which line was refused first, counted from 1 over the whole file. */
   uint16_t firstBadLine;
 } MemoryImportResult;
 
+/*
+ * Read the list from `text`.
+ *
+ * `plan`, the band plan in use, is what a frequency is judged against, or
+ * NULL for no judgement at all.
+ */
 bool memoryImportCsv(MemoryStore *m, MemoryImportMode mode, const char *text,
-                     size_t len, MemoryImportResult *out);
+                     size_t len, const BandPlanConfig *plan,
+                     MemoryImportResult *out);
 
 #ifdef __cplusplus
 }

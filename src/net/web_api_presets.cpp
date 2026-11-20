@@ -270,7 +270,8 @@ static void handleApiMemoryPost(void) {
  *
  * `mode=merge` fills the empty slots only. `mode=replace` throws the list
  * away and loads the file, and refuses the whole file if one line cannot be
- * read, so a bad file never leaves a half loaded list.
+ * read or if two lines name one slot, so a bad file never leaves a half
+ * loaded list.
  */
 static void handleApiMemoryImport(void) {
   if (!requireAuth(false)) {
@@ -298,7 +299,12 @@ static void handleApiMemoryImport(void) {
   }
   String body = sWeb->server.arg("plain");
   MemoryImportResult result;
-  if (!memoryStoreImport(mode, body.c_str(), body.length(), &result)) {
+  /* The plan as it stands now, so a line the radio cannot tune today is
+   * counted as its own thing rather than read as if it were usable. */
+  BandPlanConfig plan;
+  const bool hasPlan = radioTaskPlan(&plan);
+  if (!memoryStoreImport(mode, body.c_str(), body.length(),
+                         hasPlan ? &plan : NULL, &result)) {
     apiFail(400, String("Line ") + result.firstBadLine +
                      " could not be read, so nothing was changed.");
     return;
@@ -306,7 +312,8 @@ static void handleApiMemoryImport(void) {
   String said = String(result.imported) + " of " + result.lines +
                 " lines imported, " + result.skipped + " refused, " +
                 result.kept + " already taken, " + result.truncated +
-                " names cut short";
+                " names cut short, " + result.outsidePlan +
+                " outside the band plan";
   DebugLog.printf("[api] %s\n", said.c_str());
   sWeb->server.send(200, "text/plain", said + "\n");
 }
