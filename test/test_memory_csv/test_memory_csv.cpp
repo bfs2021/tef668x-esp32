@@ -485,9 +485,8 @@ static void a_frequency_outside_the_band_plan_is_counted_and_kept(void) {
   BandPlanConfig plan;
   bandPlanDefaults(&plan);
   const char *text = "1,FM,92700,0,In\n2,FM,70000,0,Out\n";
-  TEST_ASSERT_TRUE(
-      memoryImportCsv(&store, MEMORY_IMPORT_MERGE, text, strlen(text), &plan,
-                      &result));
+  TEST_ASSERT_TRUE(memoryImportCsv(&store, MEMORY_IMPORT_MERGE, text,
+                                   strlen(text), &plan, &result));
   TEST_ASSERT_EQUAL_UINT16(2, result.imported);
   TEST_ASSERT_EQUAL_UINT16(1, result.outsidePlan);
   TEST_ASSERT_EQUAL_STRING("Out", memoryGet(&store, 1)->name);
